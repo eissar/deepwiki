@@ -1,7 +1,18 @@
 {
-  "private": true,
+  "name": "deepwiki",
+  "version": "0.1.8",
+  "description": "CLI wrapper around DeepWiki — query any public GitHub repo's docs from the terminal",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/eissar/deepwiki.git"
+  },
+  "bin": {
+    "deepwiki": "./bin/deepwiki.js"
+  },
   "workspaces": ["packages/*"],
   "scripts": {
+    "build": "bun run --cwd packages/cli build && cp packages/cli/dist/index.js bin/deepwiki.js",
     "deepwiki": "bun run packages/cli/src/index.ts",
     "dev:web": "bun run --cwd packages/website dev",
     "test": "bun test packages/cli/tests/",

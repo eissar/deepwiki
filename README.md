@@ -7,7 +7,7 @@ Inspired by Andrej Karpathy's [post on DeepWiki](https://x.com/karpathy/status/2
 **Install the [Claude Code skill](https://docs.anthropic.com/en/docs/claude-code)** so Claude can use [DeepWiki](https://deepwiki.com) directly on your behalf:
 
 ```bash
-npx skills add https://github.com/seflless/deepwiki --skill deepwiki
+npx skills add https://github.com/eissar/deepwiki --skill deepwiki
 ```
 
 **Ask anything:**
@@ -26,13 +26,13 @@ There's also a CLI if you want to use deepwiki directly.
 npm install -g @seflless/deepwiki
 ```
 
-Or use `npx @seflless/deepwiki` without installing.
+Or use `npx github:eissar/deepwiki` without installing:
 
 ```bash
-deepwiki ask facebook/react "How does the fiber reconciler work?"
-deepwiki wiki oven-sh/bun
-deepwiki toc facebook/react
-deepwiki wiki anthropics/claude-code --json > docs.json
+npx github:eissar/deepwiki ask facebook/react "How does the fiber reconciler work?"
+npx github:eissar/deepwiki wiki oven-sh/bun
+npx github:eissar/deepwiki toc facebook/react
+npx github:eissar/deepwiki wiki anthropics/claude-code --json > docs.json
 ```
 
 ### Flags
