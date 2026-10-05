@@ -3756,84 +3756,195 @@ class ServerError extends DeepWikiError {
 
 // src/client.ts
 var MCP_ENDPOINT = "https://mcp.deepwiki.com/mcp";
+var IDLE_TIMEOUT_MS = 60000;
+var RAW_LIMIT = 2000;
 var requestId = 0;
-function makeRequest(method, params) {
-  return {
-    jsonrpc: "2.0",
-    method,
-    params,
-    id: ++requestId
-  };
+function clip(s) {
+  return s.length > RAW_LIMIT ? `${s.slice(0, RAW_LIMIT)}… [${s.length - RAW_LIMIT} more chars]` : s;
 }
-function parseSSE(raw) {
-  for (const line of raw.split(`
-`)) {
-    if (line.startsWith("data: ")) {
-      try {
-        return JSON.parse(line.slice(6));
-      } catch {
-        throw new ServerError("Malformed JSON in SSE response");
-      }
-    }
-  }
-  throw new ServerError("No data in SSE response");
+function fail(reason, raw) {
+  const rawStr = raw === undefined ? "" : typeof raw === "string" ? raw : JSON.stringify(raw);
+  throw new ServerError(rawStr ? `${reason}
+--- raw ---
+${clip(rawStr)}` : reason);
 }
-async function callMcp(toolName, args) {
-  const body = makeRequest("tools/call", { name: toolName, arguments: args });
-  const controller = new AbortController;
-  const timeoutId = setTimeout(() => controller.abort(), 60000);
-  let res;
+function parseJson(text, where) {
   try {
-    res = await fetch(MCP_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream"
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal
-    });
+    return JSON.parse(text);
   } catch (err) {
+    fail(`Malformed JSON in ${where}: ${err.message}`, text);
+  }
+}
+function route(msg, id, onProgress) {
+  if (msg.method !== undefined && msg.id === undefined) {
+    if (msg.method === "notifications/message" || msg.method === "notifications/progress") {
+      const text = msg.params?.data?.msg ?? msg.params?.message;
+      if (typeof text === "string")
+        onProgress?.(text);
+      return;
+    }
+    fail(`Unhandled server notification '${msg.method}'`, msg);
+  }
+  if (msg.method !== undefined) {
+    fail(`Server sent a request ('${msg.method}'); this client does not handle server->client requests`, msg);
+  }
+  if (msg.id !== id) {
+    fail(`Response id mismatch: expected ${id}, got ${JSON.stringify(msg.id)}`, msg);
+  }
+  return msg;
+}
+async function readSse(res, id, resetIdle, onProgress) {
+  if (!res.body)
+    fail("SSE response has no body");
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder;
+  let buf = "";
+  let data = [];
+  let seenAny = false;
+  const dispatch = () => {
+    if (data.length === 0)
+      return;
+    const payload = data.join(`
+`);
+    data = [];
+    seenAny = true;
+    return route(parseJson(payload, "SSE event"), id, onProgress);
+  };
+  for (;; ) {
+    const { value, done } = await reader.read();
+    if (value) {
+      resetIdle();
+      buf += decoder.decode(value, { stream: true });
+    }
+    if (done)
+      buf += `
+
+`;
+    let nl;
+    while ((nl = buf.search(/\r\n|\r|\n/)) !== -1) {
+      const line = buf.slice(0, nl);
+      buf = buf.slice(nl + (buf.startsWith(`\r
+`, nl) ? 2 : 1));
+      if (line === "") {
+        const msg = dispatch();
+        if (msg) {
+          reader.cancel().catch(() => {});
+          return msg;
+        }
+        continue;
+      }
+      if (line.startsWith(":"))
+        continue;
+      const colon = line.indexOf(":");
+      const field = colon === -1 ? line : line.slice(0, colon);
+      let val = colon === -1 ? "" : line.slice(colon + 1);
+      if (val.startsWith(" "))
+        val = val.slice(1);
+      if (field === "data")
+        data.push(val);
+    }
+    if (done) {
+      fail(seenAny ? `SSE stream ended without a response for request id ${id}` : "SSE stream ended without any events");
+    }
+  }
+}
+function extractText(result, isError) {
+  const content = result?.content;
+  if (!Array.isArray(content) || content.length === 0) {
+    fail(`${isError ? "Tool error" : "Tool result"} has no content`, result);
+  }
+  const nonText = content.filter((c) => c?.type !== "text" || typeof c.text !== "string");
+  if (nonText.length > 0) {
+    fail(`${isError ? "Tool error" : "Tool result"} contains non-text content`, result);
+  }
+  const text = content.map((c) => c.text).join(`
+`);
+  if (text.trim() === "") {
+    fail(`${isError ? "Tool error" : "Tool result"} text is empty`, result);
+  }
+  return text;
+}
+async function callMcp(toolName, args, onProgress) {
+  const id = ++requestId;
+  const body = { jsonrpc: "2.0", method: "tools/call", params: { name: toolName, arguments: args }, id };
+  const controller = new AbortController;
+  let timeoutId;
+  const resetIdle = () => {
     clearTimeout(timeoutId);
-    if (err instanceof DOMException && err.name === "AbortError") {
-      throw new ServerError("Request timed out after 60s");
-    }
-    throw err;
-  }
-  clearTimeout(timeoutId);
-  if (!res.ok) {
-    throw new ServerError(`DeepWiki server returned ${res.status}: ${res.statusText}`);
-  }
-  const raw = await res.text();
-  const contentType = res.headers.get("content-type") || "";
-  let rpc;
-  if (contentType.includes("text/event-stream")) {
-    rpc = parseSSE(raw);
-  } else {
+    timeoutId = setTimeout(() => controller.abort(), IDLE_TIMEOUT_MS);
+  };
+  resetIdle();
+  try {
+    let res;
     try {
-      rpc = JSON.parse(raw);
-    } catch {
-      throw new ServerError("Malformed JSON in response");
+      res = await fetch(MCP_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream"
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal
+      });
+    } catch (err) {
+      throw describeFetchError(err);
     }
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      fail(`DeepWiki server returned HTTP ${res.status} ${res.statusText}`, text || undefined);
+    }
+    const contentType = res.headers.get("content-type") || "";
+    let rpc;
+    try {
+      if (contentType.includes("text/event-stream")) {
+        rpc = await readSse(res, id, resetIdle, onProgress);
+      } else if (contentType.includes("application/json")) {
+        const msg = route(parseJson(await res.text(), "JSON response"), id, onProgress);
+        if (!msg)
+          fail("JSON response was a notification, not a response");
+        rpc = msg;
+      } else {
+        fail(`Unexpected content-type '${contentType}'`, await res.text().catch(() => ""));
+      }
+    } catch (err) {
+      if (err instanceof ServerError)
+        throw err;
+      throw describeFetchError(err);
+    }
+    if (rpc.error) {
+      fail(`MCP error ${rpc.error.code}: ${rpc.error.message}`, rpc.error.data);
+    }
+    if (rpc.result === undefined || rpc.result === null) {
+      fail("Response has neither 'result' nor 'error'", rpc);
+    }
+    if (rpc.result.isError) {
+      throw new ServerError(extractText(rpc.result, true));
+    }
+    return extractText(rpc.result, false);
+  } finally {
+    clearTimeout(timeoutId);
   }
-  if (rpc.error) {
-    throw new ServerError(`MCP error: ${rpc.error.message}`);
+}
+function describeFetchError(err) {
+  if (err instanceof Error && err.name === "AbortError") {
+    return new ServerError(`Request aborted: no data from server for ${IDLE_TIMEOUT_MS / 1000}s`);
   }
-  if (!rpc.result || rpc.result.isError) {
-    const text = rpc.result?.content?.[0]?.text || "Unknown error";
-    throw new ServerError(text);
+  if (err instanceof Error) {
+    const cause = err.cause;
+    const causeStr = cause ? ` (cause: ${cause.code ?? ""} ${cause.message ?? String(cause)})`.replace("  ", " ") : "";
+    return new ServerError(`Network error: ${err.message}${causeStr}`);
   }
-  return rpc.result.content[0].text;
+  return new ServerError(`Network error: ${String(err)}`);
 }
-async function readWikiStructure(repoName) {
-  return callMcp("read_wiki_structure", { repoName });
+async function readWikiStructure(repoName, onProgress) {
+  return callMcp("read_wiki_structure", { repoName }, onProgress);
 }
-async function readWikiContents(repoName) {
-  return callMcp("read_wiki_contents", { repoName });
+async function readWikiContents(repoName, onProgress) {
+  return callMcp("read_wiki_contents", { repoName }, onProgress);
 }
-async function askQuestion(repoNames, question) {
+async function askQuestion(repoNames, question, onProgress) {
   const repoName = repoNames.length === 1 ? repoNames[0] : repoNames;
-  return callMcp("ask_question", { repoName, question });
+  return callMcp("ask_wiki_question", { repoName, question }, onProgress);
 }
 
 // src/format.ts
@@ -5147,11 +5258,13 @@ function ora(options) {
 var isTTY = process.stderr.isTTY;
 async function withSpinner(label, quiet, fn) {
   if (quiet || !isTTY) {
-    return fn();
+    return fn(() => {});
   }
   const spinner = ora({ text: label, stream: process.stderr }).start();
   try {
-    const result = await fn();
+    const result = await fn((msg) => {
+      spinner.text = `${label} ${msg}`;
+    });
     spinner.stop();
     return result;
   } catch (err) {
@@ -5162,20 +5275,20 @@ async function withSpinner(label, quiet, fn) {
 
 // src/commands/toc.ts
 async function toc(repo, opts) {
-  const text = await withSpinner(`Fetching table of contents for ${repo}...`, opts.quiet, () => readWikiStructure(repo));
+  const text = await withSpinner(`Fetching table of contents for ${repo}...`, opts.quiet, (progress) => readWikiStructure(repo, progress));
   console.log(formatResult(text, opts.json));
 }
 
 // src/commands/wiki.ts
 async function wiki(repo, opts) {
-  const text = await withSpinner(`Fetching wiki for ${repo}...`, opts.quiet, () => readWikiContents(repo));
+  const text = await withSpinner(`Fetching wiki for ${repo}...`, opts.quiet, (progress) => readWikiContents(repo, progress));
   console.log(formatResult(text, opts.json));
 }
 
 // src/commands/ask.ts
 async function ask(repos, question, opts) {
   const label = repos.length === 1 ? `Asking about ${repos[0]}...` : `Asking about ${repos.length} repos...`;
-  const text = await withSpinner(label, opts.quiet, () => askQuestion(repos, question));
+  const text = await withSpinner(label, opts.quiet, (progress) => askQuestion(repos, question, progress));
   console.log(formatResult(text, opts.json));
 }
 

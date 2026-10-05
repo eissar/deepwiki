@@ -6,7 +6,7 @@ export async function toc(repo: string, opts: { json: boolean; quiet: boolean })
   const text = await withSpinner(
     `Fetching table of contents for ${repo}...`,
     opts.quiet,
-    () => readWikiStructure(repo),
+    (progress) => readWikiStructure(repo, progress),
   );
   console.log(formatResult(text, opts.json));
 }

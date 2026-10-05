@@ -87,7 +87,7 @@ describe("client", () => {
     const client = await loadClient();
     await client.askQuestion(["facebook/react"], "What is JSX?");
 
-    expect(capturedBody.params.name).toBe("ask_question");
+    expect(capturedBody.params.name).toBe("ask_wiki_question");
     expect(capturedBody.params.arguments.repoName).toBe("facebook/react");
     expect(capturedBody.params.arguments.question).toBe("What is JSX?");
 
@@ -216,7 +216,7 @@ describe("client", () => {
       expect(true).toBe(false);
     } catch (err) {
       expect(err).toBeInstanceOf(ServerError);
-      expect((err as ServerError).message).toContain("No data in SSE");
+      expect((err as ServerError).message).toContain("ended without any events");
     }
 
     globalThis.fetch = originalFetch;
@@ -331,5 +331,68 @@ describe("client", () => {
     expect(capturedSignal).toBeInstanceOf(AbortSignal);
 
     globalThis.fetch = originalFetch;
+  });
+});
+
+describe("client failure states (fail fast, no opaque errors)", () => {
+  const orig = globalThis.fetch;
+  const load = () => import(`../src/client.js?t=${Date.now()}_${Math.random()}`);
+  const sse = (raw: string) => (globalThis.fetch = mock(async () =>
+    new Response(raw, { headers: { "content-type": "text/event-stream" } })) as any);
+  const ev = (o: object) => `event: message\ndata: ${JSON.stringify(o)}\n\n`;
+  const note = (msg: string) => ({ jsonrpc: "2.0", method: "notifications/message", params: { level: "info", data: { msg } } });
+  const ok = (text: string) => ({ jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text }] } });
+  async function err(): Promise<string> {
+    const c = await load();
+    try { await c.askQuestion(["a/b"], "q"); } catch (e: any) { globalThis.fetch = orig; expect(e).toBeInstanceOf(ServerError); return e.message; }
+    globalThis.fetch = orig; throw new Error("expected throw");
+  }
+
+  test("skips progress notifications and reports them", async () => {
+    sse(ev(note("(14s elapsed)")) + ev(note("(31s elapsed)")) + ev(ok("answer")));
+    const c = await load(); const seen: string[] = [];
+    expect(await c.askQuestion(["a/b"], "q", (m: string) => seen.push(m))).toBe("answer");
+    expect(seen).toEqual(["(14s elapsed)", "(31s elapsed)"]);
+    globalThis.fetch = orig;
+  });
+  test("multi-line data and no-space data: are valid SSE", async () => {
+    sse(`data:{"jsonrpc":"2.0","id":1,\ndata: "result":{"content":[{"type":"text","text":"x"}]}}\n\n`);
+    const c = await load(); expect(await c.askQuestion(["a/b"], "q")).toBe("x"); globalThis.fetch = orig;
+  });
+  test("stream ends after only notifications", async () => {
+    sse(ev(note("p"))); expect(await err()).toContain("ended without a response");
+  });
+  test("isError with empty content includes raw", async () => {
+    sse(ev({ jsonrpc: "2.0", id: 1, result: { isError: true, content: [] } }));
+    const m = await err(); expect(m).toContain("no content"); expect(m).toContain("--- raw ---");
+  });
+  test("isError with empty text", async () => {
+    sse(ev({ jsonrpc: "2.0", id: 1, result: { isError: true, content: [{ type: "text", text: "" }] } }));
+    expect(await err()).toContain("text is empty");
+  });
+  test("non-text content", async () => {
+    sse(ev({ jsonrpc: "2.0", id: 1, result: { content: [{ type: "image", data: "" }] } }));
+    expect(await err()).toContain("non-text content");
+  });
+  test("success with empty content", async () => {
+    sse(ev({ jsonrpc: "2.0", id: 1, result: { content: [] } })); expect(await err()).toContain("no content");
+  });
+  test("id mismatch", async () => {
+    sse(ev({ ...ok("x"), id: 99 })); expect(await err()).toContain("id mismatch");
+  });
+  test("unknown notification method", async () => {
+    sse(ev({ jsonrpc: "2.0", method: "notifications/weird" })); expect(await err()).toContain("notifications/weird");
+  });
+  test("HTTP error includes body", async () => {
+    globalThis.fetch = mock(async () => new Response("rate limited", { status: 429, statusText: "Too Many" })) as any;
+    const m = await err(); expect(m).toContain("429"); expect(m).toContain("rate limited");
+  });
+  test("network error includes cause", async () => {
+    globalThis.fetch = mock(async () => { throw new TypeError("fetch failed", { cause: { code: "ENOTFOUND", message: "getaddrinfo" } }); }) as any;
+    const m = await err(); expect(m).toContain("fetch failed"); expect(m).toContain("ENOTFOUND");
+  });
+  test("unexpected content-type", async () => {
+    globalThis.fetch = mock(async () => new Response("<html>", { headers: { "content-type": "text/html" } })) as any;
+    expect(await err()).toContain("Unexpected content-type");
   });
 });

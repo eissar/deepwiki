@@ -24,7 +24,7 @@ Version: 2.14.3 (fastmcp)
 |------|--------|-------------|
 | `read_wiki_structure` | `repoName: string` (owner/repo) | Get docs table of contents |
 | `read_wiki_contents` | `repoName: string` (owner/repo) | Get full wiki content |
-| `ask_question` | `repoName: string \| string[]` (max 10), `question: string` | AI-powered Q&A about repo(s) |
+| `ask_wiki_question` | `repoName: string \| string[]` (max 10), `question: string` | AI-powered Q&A about repo(s) |
 | `list_available_repos` | (private mode only) | N/A for public CLI |
 
 All outputs: `{ result: string }`
@@ -41,8 +41,8 @@ deepwiki <subcommand> [options]
 |---------|-------|---------|
 | `toc` | `deepwiki toc <owner/repo>` | `read_wiki_structure` |
 | `wiki` | `deepwiki wiki <owner/repo>` | `read_wiki_contents` |
-| `ask` | `deepwiki ask <owner/repo> "<question>"` | `ask_question` |
-| `ask` | `deepwiki ask <repo1> <repo2> ... "<question>"` | `ask_question` (multi-repo, max 10) |
+| `ask` | `deepwiki ask <owner/repo> "<question>"` | `ask_wiki_question` |
+| `ask` | `deepwiki ask <repo1> <repo2> ... "<question>"` | `ask_wiki_question` (multi-repo, max 10) |
 
 ### Global Flags
 

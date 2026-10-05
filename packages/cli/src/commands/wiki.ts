@@ -6,7 +6,7 @@ export async function wiki(repo: string, opts: { json: boolean; quiet: boolean }
   const text = await withSpinner(
     `Fetching wiki for ${repo}...`,
     opts.quiet,
-    () => readWikiContents(repo),
+    (progress) => readWikiContents(repo, progress),
   );
   console.log(formatResult(text, opts.json));
 }

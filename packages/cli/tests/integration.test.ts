@@ -14,7 +14,7 @@ mock.module("../src/client.js", () => ({
 }));
 
 mock.module("../src/spinner.js", () => ({
-  withSpinner: mock(async (_label: string, _quiet: boolean, fn: () => Promise<string>) => fn()),
+  withSpinner: mock(async (_label: string, _quiet: boolean, fn: (p: (m: string) => void) => Promise<string>) => fn(() => {})),
 }));
 
 import { createProgram } from "../src/cli.js";
@@ -39,7 +39,7 @@ describe("integration: full CLI flow", () => {
     program.exitOverride();
     await program.parseAsync(["node", "deepwiki", "toc", "facebook/react"]);
 
-    expect(mockReadWikiStructure).toHaveBeenCalledWith("facebook/react");
+    expect(mockReadWikiStructure).toHaveBeenCalledWith("facebook/react", expect.any(Function));
     expect(logSpy).toHaveBeenCalled();
     expect(logSpy.mock.calls[0][0]).toContain("# TOC");
   });
@@ -49,7 +49,7 @@ describe("integration: full CLI flow", () => {
     program.exitOverride();
     await program.parseAsync(["node", "deepwiki", "--json", "wiki", "owner/repo"]);
 
-    expect(mockReadWikiContents).toHaveBeenCalledWith("owner/repo");
+    expect(mockReadWikiContents).toHaveBeenCalledWith("owner/repo", expect.any(Function));
     const output = logSpy.mock.calls[0][0];
     const parsed = JSON.parse(output);
     expect(parsed.result).toBe("# Full Wiki\nAll the content.");
@@ -68,8 +68,7 @@ describe("integration: full CLI flow", () => {
 
     expect(mockAskQuestion).toHaveBeenCalledWith(
       ["facebook/react"],
-      "How does reconciliation work?",
-    );
+      "How does reconciliation work?", expect.any(Function));
     expect(logSpy.mock.calls[0][0]).toContain("fibers");
   });
 
@@ -87,8 +86,7 @@ describe("integration: full CLI flow", () => {
 
     expect(mockAskQuestion).toHaveBeenCalledWith(
       ["facebook/react", "vercel/next.js"],
-      "SSR question",
-    );
+      "SSR question", expect.any(Function));
   });
 
   test("invalid repo format throws UsageError", async () => {
@@ -128,6 +126,6 @@ describe("integration: full CLI flow", () => {
     await program.parseAsync(["node", "deepwiki", "--quiet", "toc", "a/b"]);
 
     // The command should still work (quiet just suppresses spinner)
-    expect(mockReadWikiStructure).toHaveBeenCalledWith("a/b");
+    expect(mockReadWikiStructure).toHaveBeenCalledWith("a/b", expect.any(Function));
   });
 });

@@ -11,8 +11,8 @@ export async function ask(
     ? `Asking about ${repos[0]}...`
     : `Asking about ${repos.length} repos...`;
 
-  const text = await withSpinner(label, opts.quiet, () =>
-    askQuestion(repos, question),
+  const text = await withSpinner(label, opts.quiet, (progress) =>
+    askQuestion(repos, question, progress),
   );
   console.log(formatResult(text, opts.json));
 }
