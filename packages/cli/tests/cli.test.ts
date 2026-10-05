@@ -1,17 +1,10 @@
 import { describe, expect, test, mock, beforeEach, spyOn } from "bun:test";
+// Shared client/spinner mocks; must load before src modules (see mocks.ts).
+// Do NOT mock.module the command modules here: it is process-global and would
+// replace them for commands.test.ts too.
+import "./mocks.js";
 import { createProgram } from "../src/cli.js";
 import { UsageError } from "../src/errors.js";
-
-// Mock the command handlers so they don't actually call the MCP server
-mock.module("../src/commands/toc.js", () => ({
-  toc: mock(async () => {}),
-}));
-mock.module("../src/commands/wiki.js", () => ({
-  wiki: mock(async () => {}),
-}));
-mock.module("../src/commands/ask.js", () => ({
-  ask: mock(async () => {}),
-}));
 
 describe("createProgram", () => {
   test("program name is deepwiki", () => {

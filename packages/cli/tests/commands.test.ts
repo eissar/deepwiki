@@ -1,24 +1,12 @@
-import { describe, expect, test, mock, spyOn, beforeEach, afterEach } from "bun:test";
+import { describe, expect, test, spyOn, beforeEach, afterEach } from "bun:test";
 
-// Mock all client exports
-const mockReadWikiStructure = mock(async () => "# Table of Contents\n- Intro\n- API");
-const mockReadWikiContents = mock(async () => "# Full Wiki\nContent here.");
-const mockAskQuestion = mock(async () => "The answer is 42.");
-
-mock.module("../src/client.js", () => ({
-  readWikiStructure: mockReadWikiStructure,
-  readWikiContents: mockReadWikiContents,
-  askQuestion: mockAskQuestion,
-}));
-
-// Mock spinner to just run the function directly, capture label
-let capturedSpinnerLabel = "";
-mock.module("../src/spinner.js", () => ({
-  withSpinner: mock(async (label: string, _quiet: boolean, fn: (p: (m: string) => void) => Promise<string>) => {
-    capturedSpinnerLabel = label;
-    return fn(() => {});
-  }),
-}));
+import {
+  mockReadWikiStructure,
+  mockReadWikiContents,
+  mockAskQuestion,
+  spinnerState,
+  resetMocks,
+} from "./mocks.js";
 
 import { toc } from "../src/commands/toc.js";
 import { wiki } from "../src/commands/wiki.js";
@@ -28,8 +16,7 @@ describe("toc command", () => {
   let logSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
-    mockReadWikiStructure.mockClear();
-    capturedSpinnerLabel = "";
+    resetMocks({ toc: "# Table of Contents\n- Intro\n- API", wiki: "# Full Wiki\nContent here.", ask: "The answer is 42." });
     logSpy = spyOn(console, "log").mockImplementation(() => {});
   });
 
@@ -59,8 +46,7 @@ describe("wiki command", () => {
   let logSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
-    mockReadWikiContents.mockClear();
-    capturedSpinnerLabel = "";
+    resetMocks({ toc: "# Table of Contents\n- Intro\n- API", wiki: "# Full Wiki\nContent here.", ask: "The answer is 42." });
     logSpy = spyOn(console, "log").mockImplementation(() => {});
   });
 
@@ -90,8 +76,7 @@ describe("ask command", () => {
   let logSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
-    mockAskQuestion.mockClear();
-    capturedSpinnerLabel = "";
+    resetMocks({ toc: "# Table of Contents\n- Intro\n- API", wiki: "# Full Wiki\nContent here.", ask: "The answer is 42." });
     logSpy = spyOn(console, "log").mockImplementation(() => {});
   });
 
@@ -106,12 +91,12 @@ describe("ask command", () => {
 
   test("single repo spinner label includes repo name", async () => {
     await ask(["facebook/react"], "question", { json: false, quiet: false });
-    expect(capturedSpinnerLabel).toContain("facebook/react");
+    expect(spinnerState.label).toContain("facebook/react");
   });
 
   test("multi-repo spinner label includes count", async () => {
     await ask(["a/b", "c/d", "e/f"], "question", { json: false, quiet: false });
-    expect(capturedSpinnerLabel).toContain("3 repos");
+    expect(spinnerState.label).toContain("3 repos");
   });
 
   test("outputs plain text by default", async () => {

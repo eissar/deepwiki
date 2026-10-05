@@ -1,21 +1,14 @@
-import { describe, expect, test, mock, beforeEach, afterEach, spyOn } from "bun:test";
+import { describe, expect, test, beforeEach, afterEach, spyOn } from "bun:test";
 
 // Integration tests use mock.module for the client to test the full CLI flow
 // (arg parsing -> command -> client -> format -> output) without hitting the network.
 
-const mockReadWikiStructure = mock(async () => "# TOC\n- Getting Started");
-const mockReadWikiContents = mock(async () => "# Full Wiki\nAll the content.");
-const mockAskQuestion = mock(async () => "React uses fibers for reconciliation.");
-
-mock.module("../src/client.js", () => ({
-  readWikiStructure: mockReadWikiStructure,
-  readWikiContents: mockReadWikiContents,
-  askQuestion: mockAskQuestion,
-}));
-
-mock.module("../src/spinner.js", () => ({
-  withSpinner: mock(async (_label: string, _quiet: boolean, fn: (p: (m: string) => void) => Promise<string>) => fn(() => {})),
-}));
+import {
+  mockReadWikiStructure,
+  mockReadWikiContents,
+  mockAskQuestion,
+  resetMocks,
+} from "./mocks.js";
 
 import { createProgram } from "../src/cli.js";
 import { UsageError, ServerError } from "../src/errors.js";
@@ -24,9 +17,7 @@ describe("integration: full CLI flow", () => {
   let logSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
-    mockReadWikiStructure.mockClear();
-    mockReadWikiContents.mockClear();
-    mockAskQuestion.mockClear();
+    resetMocks({ toc: "# TOC\n- Getting Started", wiki: "# Full Wiki\nAll the content.", ask: "React uses fibers for reconciliation." });
     logSpy = spyOn(console, "log").mockImplementation(() => {});
   });
 
